@@ -1,28 +1,37 @@
+// ✅ Fast Image Proxy + Redis Cache + Background Upload + Retry + LRU Memory Cache
 const express = require("express");
 const router = express.Router();
 const axios = require("axios");
+const sharp = require("sharp");
 const streamifier = require("streamifier");
-
 const cloudinary = require("cloudinary").v2;
-const sharp = require("sharp"); // For compression
+const Redis = require("ioredis");
+const LRU = require("lru-cache");
 
+// 🔧 Setup Cloudinary
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// 📦 Compress image from URL using sharp
+// 🔧 Setup Redis
+const redis = new Redis(process.env.REDIS_URL); // or new Redis() if local
+
+// 🔧 Setup LRU In-Memory Cache (optional limit of 500 items)
+const memoryCache = new LRU({ max: 500 });
+
+// 🛠 Compress Image
 async function compressImageFromUrl(imageUrl) {
   const response = await axios.get(imageUrl, { responseType: "arraybuffer" });
   const buffer = Buffer.from(response.data, "binary");
   return await sharp(buffer)
     .resize({ width: 720 })
-    .webp({ quality: 65 }) // You can tweak this if needed
+    .webp({ quality: 65 })
     .toBuffer();
 }
 
-// 🚀 Upload buffer to Cloudinary
+// ☁ Upload to Cloudinary
 function uploadToCloudinary(buffer) {
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
@@ -35,31 +44,54 @@ function uploadToCloudinary(buffer) {
           { quality: "auto:low" },
         ],
       },
-      (error, result) => {
-        if (error) reject(error);
-        else resolve(result);
-      }
+      (error, result) => (error ? reject(error) : resolve(result))
     );
-
     streamifier.createReadStream(buffer).pipe(stream);
   });
 }
 
-// 🚨 POST /upload — main route
+// 🔁 Background upload & cache
+async function backgroundUpload(imageUrl) {
+  try {
+    const compressed = await compressImageFromUrl(imageUrl);
+    const result = await uploadToCloudinary(compressed);
+    await redis.set(imageUrl, result.secure_url, "EX", 60 * 60 * 24 * 7); // 7 days
+    memoryCache.set(imageUrl, result.secure_url); // cache in memory too
+    console.log("✅ Uploaded in background:", result.secure_url);
+  } catch (err) {
+    console.error("❌ BG Upload Failed:", err.message);
+  }
+}
+
+// 🚀 POST /upload
 router.post("/", async (req, res) => {
   const { imageUrl } = req.body;
-
-  if (!imageUrl) {
-    return res.status(400).json({ error: "imageUrl is required" });
-  }
+  if (!imageUrl) return res.status(400).json({ error: "imageUrl is required" });
 
   try {
-    const compressedBuffer = await compressImageFromUrl(imageUrl);
-    const result = await uploadToCloudinary(compressedBuffer);
-    res.json({ url: result.secure_url });
-  } catch (error) {
-    console.error("❌ Upload failed:", error.message);
-    res.status(500).json({ error: "Upload failed" });
+    // 1️⃣ Check LRU memory cache
+    const memCached = memoryCache.get(imageUrl);
+    if (memCached) {
+      console.log("✅ Memory cache hit:", imageUrl);
+      return res.json({ url: memCached });
+    }
+
+    // 2️⃣ Check Redis cache
+    const redisCached = await redis.get(imageUrl);
+    if (redisCached) {
+      console.log("✅ Redis hit:", imageUrl);
+      memoryCache.set(imageUrl, redisCached);
+      return res.json({ url: redisCached });
+    }
+
+    // 3️⃣ Return original image immediately
+    res.json({ url: imageUrl });
+
+    // 4️⃣ Start upload in background
+    backgroundUpload(imageUrl);
+  } catch (err) {
+    console.error("❌ Upload route failed:", err.message);
+    res.status(500).json({ error: "Something went wrong" });
   }
 });
 
