@@ -28,8 +28,8 @@ async function compressImageFromUrl(imageUrl) {
   const response = await axios.get(imageUrl, { responseType: "arraybuffer" });
   const buffer = Buffer.from(response.data, "binary");
   return await sharp(buffer)
-    .resize({ width: 720 })
-    .webp({ quality: 65 })
+    .resize({ width: 600 })
+    .webp({ quality: 40 })
     .toBuffer();
 }
 
@@ -42,7 +42,7 @@ function uploadToCloudinary(buffer) {
         folder: "comicspie",
         format: "webp",
         transformation: [
-          { width: 720, crop: "scale" },
+          { width: 600, crop: "scale" },
           { quality: "auto:low" },
         ],
       },
