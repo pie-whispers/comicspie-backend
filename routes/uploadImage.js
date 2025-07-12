@@ -6,7 +6,7 @@ const sharp = require("sharp");
 const streamifier = require("streamifier");
 const cloudinary = require("cloudinary").v2;
 const Redis = require("ioredis");
-const LRU = require("lru-cache");
+const { LRUCache } = require("lru-cache"); // ✅ Fixed import
 
 // 🔧 Setup Cloudinary
 cloudinary.config({
@@ -18,8 +18,8 @@ cloudinary.config({
 // 🔧 Setup Redis
 const redis = new Redis(process.env.REDIS_URL); // or new Redis() if local
 
-// 🔧 Setup LRU In-Memory Cache (optional limit of 500 items)
-const memoryCache = new LRU({ max: 500 });
+// 🔧 Setup LRU In-Memory Cache (500 items max)
+const memoryCache = new LRUCache({ max: 500 }); // ✅ Fixed usage
 
 // 🛠 Compress Image
 async function compressImageFromUrl(imageUrl) {
