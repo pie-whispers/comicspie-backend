@@ -6,7 +6,7 @@ const sharp = require("sharp");
 const streamifier = require("streamifier");
 const cloudinary = require("cloudinary").v2;
 const Redis = require("ioredis");
-const { LRUCache } = require("lru-cache"); // ✅ Fixed import
+const { LRUCache } = require("lru-cache");
 
 // 🔧 Setup Cloudinary
 cloudinary.config({
@@ -15,11 +15,13 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// 🔧 Setup Redis
-const redis = new Redis(process.env.REDIS_URL); // or new Redis() if local
+// 🔧 Setup Redis with TLS for Upstash (secure rediss://)
+const redis = new Redis(process.env.REDIS_URL, {
+  tls: {}, // ✅ This ensures secure connection to Upstash
+});
 
 // 🔧 Setup LRU In-Memory Cache (500 items max)
-const memoryCache = new LRUCache({ max: 500 }); // ✅ Fixed usage
+const memoryCache = new LRUCache({ max: 500 });
 
 // 🛠 Compress Image
 async function compressImageFromUrl(imageUrl) {
@@ -56,7 +58,7 @@ async function backgroundUpload(imageUrl) {
     const compressed = await compressImageFromUrl(imageUrl);
     const result = await uploadToCloudinary(compressed);
     await redis.set(imageUrl, result.secure_url, "EX", 60 * 60 * 24 * 7); // 7 days
-    memoryCache.set(imageUrl, result.secure_url); // cache in memory too
+    memoryCache.set(imageUrl, result.secure_url);
     console.log("✅ Uploaded in background:", result.secure_url);
   } catch (err) {
     console.error("❌ BG Upload Failed:", err.message);
